@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <utility>
 #include <stdexcept>
 #include <initializer_list>
 
@@ -41,6 +42,15 @@ public:
     SimpleVector(size_t size, const Type& value) : data_(size), size_(size), capacity_(size) {
         if (size) {
             std::fill(data_.Get(), data_.Get() + size_, value);
+        }
+    }
+
+    SimpleVector(size_t size, Type&& value) : data_(size), size_(size), capacity_(size) {
+        if (size) {
+            for (int i = 0; i < size; ++i) {
+                data_[i] = Type(std::move(value));
+                value.Reset();
+            }
         }
     }
 
@@ -104,21 +114,28 @@ public:
     void Resize(size_t new_size) {
         if (new_size <= size_) {
             size_ = new_size;
-        } else if (new_size <= capacity_) {
-            std::fill(data_.Get() + size_, data_.Get() + new_size, Type());
-            size_ = new_size;
-        } else if (new_size > capacity_) {
-            ArrayPtr<Type> new_data(new_size);
-            std::copy(data_.Get(), data_.Get() + size_, new_data.Get());
-            std::fill(new_data.Get() + size_, new_data.Get() + new_size, Type());
-            data_.swap(new_data);
-            capacity_ = std::max(capacity_ * 2, new_size);
+        } else if (new_size > size_) {
+            if (new_size > capacity_) {
+                size_t new_capacity = std::max(new_size, capacity_ * 2);
+                ArrayPtr<Type> new_data(new_capacity);
+                std::move(begin(), end(), new_data.Get());
+                data_.swap(new_data);
+                capacity_ = new_capacity;
+            }
+            for (size_t i = size_; i < new_size; ++i) {
+                new(&data_[i]) Type();
+            }
             size_ = new_size;
         }
     }
 
     SimpleVector(const SimpleVector& other) : data_(other.size_), size_(other.size_), capacity_(other.capacity_) {
         std::copy(other.begin(), other.end(), data_.Get());
+    }
+
+    SimpleVector(SimpleVector&& other) : data_(other.size_), size_(other.size_), capacity_(other.capacity_) {
+        std::move(std::make_move_iterator(other.begin()), std::make_move_iterator(other.end()), data_.Get());
+        other.Clear();
     }
 
     SimpleVector& operator=(const SimpleVector& rhs) {
@@ -140,6 +157,15 @@ public:
         data_[size_ - 1] = item;
     }
 
+    void PushBack(Type&& item) {
+        if (size_ == capacity_) {
+            Resize(size_ + 1);
+        } else {
+            ++size_;
+        }
+        data_[size_ - 1] = std::move(item);
+    }
+
     // Вставляет значение value в позицию pos.
     // Возвращает итератор на вставленное значение
     // Если перед вставкой значения вектор был заполнен полностью,
@@ -149,8 +175,8 @@ public:
         if (size_ == capacity_) {
             ArrayPtr<Type> new_data(capacity_ == 0 ? 1 : capacity_ * 2);
             std::copy(begin(), end(), new_data.Get());
-            std::copy_backward(new_data.Get() + index, new_data.Get() + size_, new_data.Get() + size_ + 1);
             new_data[index] = value;
+            std::copy_backward(begin() + index, end(), end() + 1);
             data_.swap(new_data);
             ++size_;
             capacity_ = capacity_ == 0 ? 1 : capacity_ * 2;
@@ -159,6 +185,24 @@ public:
             data_[index] = value;
             ++size_;
         }
+        return begin() + index;
+    }
+
+    Iterator Insert(ConstIterator pos, Type&& value) {
+        size_t index = static_cast<size_t>(pos - begin());
+        if (size_ == capacity_) {
+            ArrayPtr<Type> new_data(capacity_ == 0 ? 1 : capacity_ * 2);
+            std::move(begin(), begin() + index, new_data.Get());
+            std::move(begin() + index, end(), new_data.Get() + index + 1);
+            data_.swap(new_data);
+            capacity_ = capacity_ == 0 ? 1 : capacity_ * 2;
+        } else {
+            for (size_t i = size_; i > index; --i) {
+                data_[i] = std::move(data_[i - 1]);
+            }
+        }
+        data_[index] = std::move(value);
+        ++size_;
         return begin() + index;
     }
 
@@ -174,7 +218,7 @@ public:
         assert(pos >= begin() && pos < end());
         assert(size_);
         size_t index = static_cast<size_t>(pos - begin());
-        std::copy(begin() + index + 1, end(), begin() + index);
+        std::move(begin() + index + 1, end(), begin() + index);
         --size_;
         return begin() + index;
     }
